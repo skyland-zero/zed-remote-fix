@@ -1,0 +1,11 @@
+# build output / local artifacts
+*.exe
+*.zip
+*.log
+
+# local backups made by install.ps1 on the remote machine
+backup/
+
+# misc
+.DS_Store
+Thumbs.db
