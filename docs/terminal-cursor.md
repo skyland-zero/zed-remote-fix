@@ -64,14 +64,32 @@ terminal.ansi.white = #FFFFFF     ← ConPTY 烘焙出的光标底色
 ### B. 主题覆盖：让 `ansi.white` 与背景可区分
 
 ```jsonc
-// Zed settings.json
+// 客户端那台机器的 Zed settings.json（渲染在本地，所以改客户端就行，不用改远端）
 "experimental.theme_overrides": {
-  "terminal.ansi.white": "#b0b0b0"
+  "terminal.ansi.white": "#b0b0b0"     // 浅灰；想更淡/更深可调 #c8c8c8 / #999999
 }
 ```
 
+也可以写成新式的、按主题名分组的形式（Zed 文档里的 `theme_overrides`）：
+
+```jsonc
+"theme_overrides": {
+  "VS Code Light 2026": { "terminal.ansi.white": "#b0b0b0" }
+}
+```
+
+选色建议：
+
+| 取值 | 效果 |
+| --- | --- |
+| `#b0b0b0` | 白底上是一块明显的浅灰（推荐） |
+| `#c8c8c8` | 更柔和、更不明显 |
+| `#999999` / `#8a8a8a` | 对比度最强，但 ANSI white 的文字也会明显变灰 |
+
 副作用：终端里所有 ANSI white（`\x1b[37m` / `\x1b[47m`）都变成这个灰。在浅色主题下通常**反而更好**
-（浅背景上的"白字"本来就没对比度；`One Light` 就是这么映射的）。
+（浅背景上的“白字”本来就没对比度；`One Light` 就是这么映射的：`#fafafa` + `#bbbbbb`）。
+
+> 注意：覆盖后需要**新开一个终端标签**（或等设置热重载）才会看到效果。
 
 ### C. 换主题 / 换背景
 
