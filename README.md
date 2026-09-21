@@ -48,6 +48,7 @@ shim 做三件事：
 | `shim/shim.cs` | shim 源码（C#，只用 .NET Framework 4.x 语法） |
 | `build.ps1` | 用 Windows 自带的 `csc.exe` 编译 shim |
 | `install.ps1` | **在远端 Windows 机器上执行**：识别官方二进制 → 备份 → 编译 → 安装 → 自检 |
+| `install-conpty.ps1` | **在远端 Windows 机器上执行**：把新版 ConPTY（`conpty.dll` + `OpenConsole.exe`）放到 `.zed_server`，修远端终端里 TUI 光标不可见等问题 |
 | `verify.ps1` | 自检；`-LiveTest` 会真的跑一次 proxy 握手 |
 | `uninstall.ps1` | 还原官方二进制（`-Purge` 直接清空 `.zed_server`） |
 | `docs/` | 根因分析、给上游的草稿 |
@@ -155,6 +156,7 @@ OK  daemon accepted the proxy connection
 | 日志出现 `zed shim: removing stale daemon state in ...` | shim 正在清理旧状态 | 正常现象 |
 | `Failed to download binary on server ... Neither curl nor wget is available` | 远端没有 curl/wget | 正常，Zed 会自动改成"本机下载 + SFTP 上传"；也可以装个 curl 让下载走服务器 |
 | 远端 `cmd.exe /c ver` 行为异常 / 报 `uname` 相关错误 | 默认 shell 被改成了 MSYS2、Git Bash 等 | 把 OpenSSH `DefaultShell` 改回 `cmd.exe` / PowerShell |
+| 远端 TUI（pi/vim/htop）里光标看不见 / 渲染错乱 | 远端用的是 Windows 自带的老 ConPTY（缺 `conpty.dll`） | 跑 `install-conpty.ps1`，然后**新开**一个终端（见上面「修远端终端」） |
 | 连接成功但打开远端文件夹很慢 | Zed 对超大目录（>10 万文件）仍然吃紧 | 只打开具体项目子目录 |
 | git 面板/diff 报错 | 先看 `%LOCALAPPDATA%\Zed\logs\server-<id>.log` 里有没有 `opening git repository at ...` | 有 → 远端 git 正常，按上面一行关窗重开；没有 → daemon 会话异常，关窗重连 |
 
@@ -174,6 +176,46 @@ OK  daemon accepted the proxy connection
 - 只针对 **Windows 作为远端**；Linux/macOS 远端不需要这个 shim。
 - shim 依赖 Zed 现有的 daemon 参数（`run --log-file/--pid-file/--stdin-socket/...`）。
   如果上游改了这些参数或状态目录布局，需要同步更新 `shim/shim.cs`。
+- **远端终端默认用的是 Windows 自带的老版 ConPTY**（官方 zip 里只有 `remote_server.exe`，
+  没带 `conpty.dll`/`OpenConsole.exe`），本地 Zed 终端则用新版 OpenConsole，所以两者的渲染
+  行为不一致（典型症状：远端跑 pi/vim 这类全屏 TUI 时光标看不见）。处理方式见下一节。
+
+---
+
+## 附：修远端终端（ConPTY / TUI 光标问题）
+
+**症状**：在 Zed 远端的终端里跑 `pi`、`vim`、`htop` 这类全屏 TUI，光标看不见（或终端渲染怪异）；
+同一个程序在本地 Zed 终端里正常。
+
+**原因**：`alacritty_terminal` 会先试 `LoadLibrary("conpty.dll")`，找不到就退回 Windows 自带的
+老 ConPTY（日志会写 `Using Windows API for pseudoconsole`）。本地 Zed 安装目录里带
+`conpty.dll` + `x64\OpenConsole.exe`，而官方发布的远端 server 压缩包只有 `remote_server.exe`，
+所以远端一直在用老的实现。
+
+**修法**：把客户端 Zed 安装目录里的那两个文件放到远端 `.zed_server`（保持同样的 `x64\` 结构调整）：
+
+```powershell
+# 在远端机器上执行；-Source 指向客户端那台机器的 Zed 安装目录
+.\install-conpty.ps1 -Source 'C:\Users\<你>\AppData\Local\Programs\Zed'
+```
+
+也可以直接从客户端推过去：
+
+```bash
+ZED_DIR="$LOCALAPPDATA/Programs/Zed"      # 客户端的 Zed 安装目录
+ssh <远端> 'powershell -c New-Item -ItemType Directory -Force -Path "$env:USERPROFILE\.zed_server\x64"'
+scp "$ZED_DIR/conpty.dll"            <远端>:'C:/Users/<用户>/.zed_server/conpty.dll'
+scp "$ZED_DIR/x64/OpenConsole.exe"   <远端>:'C:/Users/<用户>/.zed_server/x64/OpenConsole.exe'
+```
+
+**生效条件**：`conpty.dll` 是每次创建 pseudo console 时才加载的，所以**只要新开一个终端**即可
+（不用重连）。验证方法：
+
+```powershell
+Get-Process OpenConsole -ErrorAction SilentlyContinue     # 出现进程 = 新版 ConPTY 已启用
+```
+
+或看日志里有没有 `alacritty_terminal::tty::windows::conpty  Using conpty.dll for pseudoconsole`。
 
 ## 适用性
 
