@@ -107,7 +107,7 @@ function Resolve-ShimSource {
         }
     }
 
-    $url = "$repoUrl/raw/main/shim/shim.cs"
+    $url = 'https://raw.githubusercontent.com/skyland-zero/zed-remote-fix/main/shim/shim.cs'
     $tmp = Join-Path $env:TEMP 'zed-remote-fix-shim.cs'
     Warn "shim.cs not found locally, downloading $url"
     try {
