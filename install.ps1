@@ -35,10 +35,10 @@
 .PARAMETER SkipVerify
     Skip the `shim.exe version` self check at the end.
 
-.PARAMETER KeepRunning
-    Do not stop running remote server processes up front. By default the script stops them,
-    because a running `proxy`/daemon keeps the installed binary locked and cannot be replaced
-    (an open Zed remote window would have to be reconnected afterwards).
+.PARAMETER StopRunning
+    Stop running remote server processes before installing instead of moving the in-use file
+    aside. Only needed if the rename trick is unavailable; by default a running session is
+    left untouched.
 
 .EXAMPLE
     .\install.ps1
@@ -53,7 +53,7 @@ param(
     [string]$ShimSource,
     [switch]$CleanState,
     [switch]$SkipVerify,
-    [switch]$KeepRunning
+    [switch]$StopRunning
 )
 
 $ErrorActionPreference = 'Stop'
@@ -78,14 +78,27 @@ function Stop-RemoteServerProcesses {
     return $processes.Count
 }
 
-function Copy-FileWithRetry {
-    param([string]$From, [string]$To)
+function Install-File {
+    param([string]$From, [string]$To, [string]$Label)
 
     try {
         Copy-Item -LiteralPath $From -Destination $To -Force -ErrorAction Stop
         return
     } catch [System.IO.IOException] {
-        Warn 'the target file is in use, stopping remote server processes and retrying'
+        # A running shim/daemon keeps the file locked. Windows 10 1703+ allows a running
+        # executable to be renamed, so move it aside instead of killing the session.
+        $aside = "$To.in-use-$(Get-Date -Format yyyyMMdd-HHmmss)"
+        Warn "$Label is in use; moving it aside as $(Split-Path -Leaf $aside)"
+        try {
+            Move-Item -LiteralPath $To -Destination $aside -Force -ErrorAction Stop
+            Copy-Item -LiteralPath $From -Destination $To -Force -ErrorAction Stop
+            Ok "$Label replaced; running sessions were left alive"
+            return
+        } catch {
+            Warn "could not replace $Label in place: $($_.Exception.Message)"
+        }
+
+        Warn 'falling back to stopping the remote server processes'
         Stop-RemoteServerProcesses | Out-Null
         Start-Sleep -Milliseconds 500
         Copy-Item -LiteralPath $From -Destination $To -Force
@@ -190,7 +203,7 @@ Ok "install as  : $versionedName"
 $stamp = Get-Date -Format 'yyyyMMdd-HHmmss'
 
 if ($officialPath -ne $realPath) {
-    Copy-FileWithRetry -From $officialPath -To $realPath
+    Install-File -From $officialPath -To $realPath -Label 'zed-remote-server-real.exe'
     Ok 'official binary stored as zed-remote-server-real.exe'
 } else {
     Ok 'official binary already stored as zed-remote-server-real.exe'
@@ -198,10 +211,14 @@ if ($officialPath -ne $realPath) {
 
 Copy-Item -LiteralPath $realPath -Destination (Join-Path $backupDir "official-$stamp.exe") -Force
 
-if (-not $KeepRunning) {
-    Step 'stopping running remote server processes (they lock the installed binary)'
+if ($StopRunning) {
+    Step 'stopping running remote server processes'
     $stopped = Stop-RemoteServerProcesses
     if ($stopped -gt 0) { Ok "stopped $stopped process(es)" } else { Ok 'none were running' }
+} else {
+    # clean up leftovers from previous installs (only possible once their process exited)
+    Get-ChildItem -LiteralPath $serverDir -Filter '*.in-use-*' -File -ErrorAction SilentlyContinue |
+        ForEach-Object { Remove-Item -LiteralPath $_.FullName -Force -ErrorAction SilentlyContinue }
 }
 
 $installedPath = Join-Path $serverDir $versionedName
@@ -212,7 +229,7 @@ if (Test-Path -LiteralPath $installedPath) {
     }
 }
 
-Copy-FileWithRetry -From $shimExe -To $installedPath
+Install-File -From $shimExe -To $installedPath -Label 'the installed server binary'
 Ok "shim installed as $versionedName"
 
 # ------------------------------------------------------------------- 4. self check

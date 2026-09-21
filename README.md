@@ -105,8 +105,10 @@ powershell -ExecutionPolicy Bypass -File .\verify.ps1 -LiveTest
    ```
 3. 再连一次即可。
 
-> 脚本会先停掉残留的 `zed-remote-server*` 进程（它们会锁住要替换的 exe 文件）。
-> 如果当时正开着远端窗口，会断开一次，重连即可；想保留就加 `-KeepRunning`。
+> 脚本会先把被占用的 exe **改名挪走**再放新的（Windows 10 1703+ 支持替换正在运行的 exe），
+> 所以**升级重装不会打断你正在进行的远端会话**。旧文件会以 `…exe.in-use-<时间戳>` 留在
+> `.zed_server` 里，等那次会话结束、下次再跑 `install.ps1` 时自动清掉。
+> 如果确实要强制重启远端 server，用 `-StopRunning`（会断开当前会话）。
 
 > 想确认装对了，`install.ps1` 最后会打印 `OK  the shim forwards to the official binary correctly`，
 > 并在 `%USERPROFILE%\.zed_server\zed-remote-fix-info.txt` 留下本次安装的版本号与哈希。
@@ -148,11 +150,13 @@ OK  daemon accepted the proxy connection
 | 现象 | 原因 | 处理 |
 | --- | --- | --- |
 | 卡在 `Starting proxy`，约 60 s 后 `Client exited with exit_code 1`；远端**没有** `server-*.log` | daemon 根本没被拉起（Zed 用 Explorer ShellExecute 启动失败） | 跑 `install.ps1` |
+| 连接成功但 git 面板空白 / 报 `missing repository handle`、`no such worktree` | daemon 在会话进行中被重启过（例如跑了 `install.ps1 -CleanState`），客户端手里还是旧 server 的 worktree / repository 句柄 | **关闭远端窗口，重新打开远端项目**（干净重连即可，远端 git 本身没问题） |
 | `stdin_task failed: Failed to connect to stdin socket ... (os error 10061)` + `server exited unexpectedly` | 上一个 daemon 死掉留下僵尸 socket | 新版 shim 会自动清理；如仍出现，`install.ps1 -CleanState` 或手动删 `%LOCALAPPDATA%\Zed\server_state\<identifier>` |
 | 日志出现 `zed shim: removing stale daemon state in ...` | shim 正在清理旧状态 | 正常现象 |
 | `Failed to download binary on server ... Neither curl nor wget is available` | 远端没有 curl/wget | 正常，Zed 会自动改成"本机下载 + SFTP 上传"；也可以装个 curl 让下载走服务器 |
 | 远端 `cmd.exe /c ver` 行为异常 / 报 `uname` 相关错误 | 默认 shell 被改成了 MSYS2、Git Bash 等 | 把 OpenSSH `DefaultShell` 改回 `cmd.exe` / PowerShell |
 | 连接成功但打开远端文件夹很慢 | Zed 对超大目录（>10 万文件）仍然吃紧 | 只打开具体项目子目录 |
+| git 面板/diff 报错 | 先看 `%LOCALAPPDATA%\Zed\logs\server-<id>.log` 里有没有 `opening git repository at ...` | 有 → 远端 git 正常，按上面一行关窗重开；没有 → daemon 会话异常，关窗重连 |
 
 日志位置：
 

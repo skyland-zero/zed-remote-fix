@@ -59,6 +59,30 @@ function Copy-FileWithRetry {
     }
 }
 
+function Install-File {
+    param([string]$From, [string]$To, [string]$Label)
+
+    try {
+        Copy-Item -LiteralPath $From -Destination $To -Force -ErrorAction Stop
+        return
+    } catch [System.IO.IOException] {
+        # A running shim keeps the file locked; a running executable can be renamed on
+        # Windows 10 1703+, which avoids killing the user's remote session.
+        Write-Host "WARN $Label is in use; moving it aside" -ForegroundColor Yellow
+        try {
+            $aside = "$To.in-use-$(Get-Date -Format yyyyMMdd-HHmmss)"
+            Move-Item -LiteralPath $To -Destination $aside -Force -ErrorAction Stop
+            Copy-Item -LiteralPath $From -Destination $To -Force -ErrorAction Stop
+            return
+        } catch {
+            Write-Host "WARN in-place replacement failed: $($_.Exception.Message)" -ForegroundColor Yellow
+        }
+        Stop-RemoteServerProcesses
+        Start-Sleep -Milliseconds 500
+        Copy-Item -LiteralPath $From -Destination $To -Force
+    }
+}
+
 function Clear-ServerState {
     Get-Process -Name 'zed-remote-server-real' -ErrorAction SilentlyContinue | ForEach-Object {
         Write-Host "    stopping daemon pid $($_.Id)"
@@ -100,7 +124,7 @@ if ($shims.Count -eq 0) {
 Stop-RemoteServerProcesses
 
 foreach ($shim in $shims) {
-    Copy-FileWithRetry -From $realPath -To $shim.FullName
+    Install-File -From $realPath -To $shim.FullName -Label $shim.Name
     Ok "restored official binary over $($shim.Name)"
 }
 
