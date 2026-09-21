@@ -156,7 +156,9 @@ OK  daemon accepted the proxy connection
 | 日志出现 `zed shim: removing stale daemon state in ...` | shim 正在清理旧状态 | 正常现象 |
 | `Failed to download binary on server ... Neither curl nor wget is available` | 远端没有 curl/wget | 正常，Zed 会自动改成"本机下载 + SFTP 上传"；也可以装个 curl 让下载走服务器 |
 | 远端 `cmd.exe /c ver` 行为异常 / 报 `uname` 相关错误 | 默认 shell 被改成了 MSYS2、Git Bash 等 | 把 OpenSSH `DefaultShell` 改回 `cmd.exe` / PowerShell |
-| 远端 TUI（pi/vim/htop）里光标看不见 / 渲染错乱 | 远端用的是 Windows 自带的老 ConPTY（缺 `conpty.dll`） | 跑 `install-conpty.ps1`，然后**新开**一个终端（见上面「修远端终端」） |
+| 远端 TUI（pi/vim/htop）里光标看不见 | ① 远端用的是 Windows 自带的老 ConPTY（缺 `conpty.dll`）
+  ② 浅色主题下 `ansi.white` == 背景色，而 ConPTY 会把反显光标烘培成 ANSI 白底 | ① 跑 `install-conpty.ps1`，然后**新开**一个终端
+  ② Pi 设置 `showHardwareCursor: true`，或主题覆写 `terminal.ansi.white`（见「附二」） |
 | 连接成功但打开远端文件夹很慢 | Zed 对超大目录（>10 万文件）仍然吃紧 | 只打开具体项目子目录 |
 | git 面板/diff 报错 | 先看 `%LOCALAPPDATA%\Zed\logs\server-<id>.log` 里有没有 `opening git repository at ...` | 有 → 远端 git 正常，按上面一行关窗重开；没有 → daemon 会话异常，关窗重连 |
 
@@ -177,8 +179,9 @@ OK  daemon accepted the proxy connection
 - shim 依赖 Zed 现有的 daemon 参数（`run --log-file/--pid-file/--stdin-socket/...`）。
   如果上游改了这些参数或状态目录布局，需要同步更新 `shim/shim.cs`。
 - **远端终端默认用的是 Windows 自带的老版 ConPTY**（官方 zip 里只有 `remote_server.exe`，
-  没带 `conpty.dll`/`OpenConsole.exe`），本地 Zed 终端则用新版 OpenConsole，所以两者的渲染
-  行为不一致（典型症状：远端跑 pi/vim 这类全屏 TUI 时光标看不见）。处理方式见下一节。
+  没带 `conpty.dll`/`OpenConsole.exe`），本地 Zed 终端则用新版 OpenConsole —— 这一步仍然值得做（终端整体
+  行为/渲染更一致），但它**不是** TUI 光标不可见的原因，那个另有原因：见下一节与
+  [docs/terminal-cursor.md](docs/terminal-cursor.md)。
 
 ---
 
@@ -216,6 +219,37 @@ Get-Process OpenConsole -ErrorAction SilentlyContinue     # 出现进程 = 新�
 ```
 
 或看日志里有没有 `alacritty_terminal::tty::windows::conpty  Using conpty.dll for pseudoconsole`。
+
+---
+
+## 附二：TUI 里光标看不见（pi / vim 的“反显光标”）
+
+**症状**：在 Zed（**浅色主题**）的终端里跑 `pi`，输入行的光标看不见；同一个程序在 Windows Terminal /
+VS Code（深色背景）正常；用 `PI_HARDWARE_CURSOR=1` 或 Pi 设置 `showHardwareCursor: true` 就正常。
+
+**原因（有实测证据，见 [docs/terminal-cursor.md](docs/terminal-cursor.md)）**：
+
+1. Pi 用 `ESC[7m`（反显）画软件光标；
+2. **ConPTY 的 console 属性模型里没有“反显”**，所以它会把它折算成显式颜色再发出去：
+   `ESC[7m X ESC[27m` → `ESC[30m ESC[47m X ESC[m`（黑字 + **ANSI 白底**）；
+3. 浅色主题把 `terminal.ansi.white` 映射成了和终端背景一样的白色（如 `VS Code Light 2026`：
+   背景 `#FFFFFF`、`ansi.white` `#FFFFFF`）→ 白底空格 = 看不见。
+
+**修法（选一）**：
+
+```jsonc
+// A. 推荐：让 Pi 用硬件光标（跑 pi 的那台机器的 %USERPROFILE%\.pi\agent\settings.json）
+{ "showHardwareCursor": true }
+```
+
+```jsonc
+// B. 或者让 ansi.white 跟背景可区分（Zed settings.json）
+"experimental.theme_overrides": { "terminal.ansi.white": "#b0b0b0" }
+```
+
+- C. 换一个把 white 映射成灰色的浅色主题（Zed 内置 `One Light` 就是 `#fafafa` + `#bbbbbb`），
+  或把终端背景改成深色。
+- D. 这本质上是 ConPTY + 主题配色的问题，可以反馈给 Pi（Windows 下默认用硬件光标）或主题作者。
 
 ## 适用性
 
