@@ -156,9 +156,7 @@ OK  daemon accepted the proxy connection
 | 日志出现 `zed shim: removing stale daemon state in ...` | shim 正在清理旧状态 | 正常现象 |
 | `Failed to download binary on server ... Neither curl nor wget is available` | 远端没有 curl/wget | 正常，Zed 会自动改成"本机下载 + SFTP 上传"；也可以装个 curl 让下载走服务器 |
 | 远端 `cmd.exe /c ver` 行为异常 / 报 `uname` 相关错误 | 默认 shell 被改成了 MSYS2、Git Bash 等 | 把 OpenSSH `DefaultShell` 改回 `cmd.exe` / PowerShell |
-| 远端 TUI（pi/vim/htop）里光标看不见 | ① 远端用的是 Windows 自带的老 ConPTY（缺 `conpty.dll`）
-  ② 浅色主题下 `ansi.white` == 背景色，而 ConPTY 会把反显光标烘培成 ANSI 白底 | ① 跑 `install-conpty.ps1`，然后**新开**一个终端
-  ② Pi 设置 `showHardwareCursor: true`，或主题覆写 `terminal.ansi.white`（见「附二」） |
+| 远端 TUI（pi/vim/htop）里光标看不见 | 远端终端的 PTY 由 **sshd 的内置老 ConPTY** 创建（`conhost.exe --headless`），它会把反显光标烘焙成 ANSI 白底；浅色主题下 `ansi.white` == 背景色 → 看不见（详见 [docs/terminal-cursor.md](docs/terminal-cursor.md)） | ① Pi 设置 `showHardwareCursor: true`，或 ② 主题覆写 `terminal.ansi.white`，或 ③ 把终端背景改深色 |
 | 连接成功但打开远端文件夹很慢 | Zed 对超大目录（>10 万文件）仍然吃紧 | 只打开具体项目子目录 |
 | git 面板/diff 报错 | 先看 `%LOCALAPPDATA%\Zed\logs\server-<id>.log` 里有没有 `opening git repository at ...` | 有 → 远端 git 正常，按上面一行关窗重开；没有 → daemon 会话异常，关窗重连 |
 
@@ -187,13 +185,31 @@ OK  daemon accepted the proxy connection
 
 ## 附：修远端终端（ConPTY / TUI 光标问题）
 
+> **重要更正（2026-09-21）**：这个脚本**不能修终端里的光标问题**。
+> Windows 上**远端终端的 PTY 是 OpenSSH 的 sshd 创建的**，不是远端 server 创建的：
+> Zed 起远端终端的方式是 `ssh <host> <shell>`（见 `crates/remote/src/transport/ssh.rs` 的
+> `build_command()` 返回 `program: "ssh"`），远端进程链实测为
+> `sshd-session → conhost.exe --headless(内置 ConPTY) → shell → … → pi`。
+> 而 sshd 只调用 Windows 内置的 `CreatePseudoConsole`（`sshd-session.exe` 里只能找到
+> `CreatePseudoConsole`/`conhost`，**没有** `conpty.dll`/`OpenConsole` 字样），所以放进
+> `.zed_server` 的 `conpty.dll` 永远不会被终端用到。
+> 终端光标的正确修法见 **[docs/terminal-cursor.md](docs/terminal-cursor.md)**（主题覆盖 `terminal.ansi.white`
+> 或 Pi 的 `showHardwareCursor`）。
+
+脚本保留的意义：如果将来 Zed 的远端 **server 自己**创建 PTY（比如某些非终端功能），或者你在远端跑的是
+Server 自带 PTY 的场景，把新版 ConPTY 放过去仍然是对的；对**终端**没用。
+
+---
+
 **症状**：在 Zed 远端的终端里跑 `pi`、`vim`、`htop` 这类全屏 TUI，光标看不见（或终端渲染怪异）；
 同一个程序在本地 Zed 终端里正常。
 
 **原因**：`alacritty_terminal` 会先试 `LoadLibrary("conpty.dll")`，找不到就退回 Windows 自带的
 老 ConPTY（日志会写 `Using Windows API for pseudoconsole`）。本地 Zed 安装目录里带
-`conpty.dll` + `x64\OpenConsole.exe`，而官方发布的远端 server 压缩包只有 `remote_server.exe`，
-所以远端一直在用老的实现。
+`conpty.dll` + `x64\OpenConsole.exe`，而官方发布的远端 server 压缩包只有 `remote_server.exe`。
+
+**但**：远端终端的 PTY 由 sshd 创建（见上面的更正），所以对终端来说这一步**没有效果**；
+只有在远端 server 自己创建 PTY 的场景下才有意义。
 
 **修法**：把客户端 Zed 安装目录里的那两个文件放到远端 `.zed_server`（保持同样的 `x64\` 结构调整）：
 

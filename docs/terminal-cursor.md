@@ -1,7 +1,12 @@
-# 附二：TUI 光标不可见（pi / vim 的"反显光标"）—— 根因与修法
+# 附二：TUI 光标不可见（pi / vim 的“反显光标”）—— 根因与修法
 
 > 结论先说：**这不是 Zed 的渲染 bug**。反显属性在到达 Zed 之前，就已经被 **Windows ConPTY 烘焙成了显式颜色**，
-> 而浅色主题把 `ansi.white` 映射成了和终端背景相同的白色，于是"白色块 + 空格"= 看不见。
+> 而浅色主题把 `ansi.white` 映射成了和终端背景相同的白色，于是“白色块 + 空格”= 看不见。
+>
+> **本地正常 / 远端不正常的原因**：本地 Zed 终端、Windows Terminal、VS Code 都自带新版 OpenConsole ConPTY
+> （`conpty.dll` + `OpenConsole.exe`），它们会保留反显；而 **Windows 上“远端终端”的 PTY 是 OpenSSH 的 sshd
+> 创建的**（Zed 用 `ssh <host> <shell>` 起终端），sshd 只能用 Windows 内置的老 ConPTY，
+> 它会把 `ESC[7m` 烤成 `ESC[30m ESC[47m`。所以远端不是一个“能装新版 ConPTY 就好了”的问题。
 
 ## 现象
 
@@ -9,6 +14,26 @@
 - 同一个 `pi` 在 Windows Terminal / VS Code（深色背景）里正常；
 - 加上 `showHardwareCursor: true`（Pi 设置）或 `PI_HARDWARE_CURSOR=1` 就正常；
 - `vim` / `htop` 之类同样是浅色主题下光标丢失。
+
+## 为什么“本地正常、远端不正常”
+
+| | 本地 Zed 终端 | 远端终端（到 Windows 主机） |
+| --- | --- | --- |
+| PTY 由谁创建 | `Zed.exe` 自己（随安装包带 `conpty.dll`+`OpenConsole.exe`） | **OpenSSH 的 sshd**（Zed 执行 `ssh <host> <shell>`） |
+| 实际 ConPTY | 新版 OpenConsole | Windows 内置老 ConPTY（`conhost.exe --headless`） |
+| `ESC[7m` | 保留 → 光标是正常的反相块 ✅ | 烤成 `ESC[30m ESC[47m` → 浅色主题下不可见 ❌ |
+
+实测的远端进程链（在 workpc 上跑 pi 时）：
+
+```
+sshd-session.exe  →  conhost.exe --headless --width …(内置 ConPTY)  →  pwsh  →  …  →  node(pi)
+```
+
+并且 `sshd-session.exe` 里只能找到 `CreatePseudoConsole` / `conhost` 字样，**没有** `conpty.dll` /
+`OpenConsole` —— 也就是说 OpenSSH 不会去加载我们放进 `.zed_server` 的那套新版 ConPTY，
+所以“给远端 server 装 conpty.dll”对终端的光标问题没有帮助（对服务器自己创建 PTY 的场景才有意义）。
+
+Windows Terminal / VS Code 的本地终端也各自带新版 ConPTY，所以它们在（深色背景下）一直都是正常的。
 
 ## 证据链（逐段实测）
 
@@ -100,6 +125,8 @@ terminal.ansi.white = #FFFFFF     ← ConPTY 烘焙出的光标底色
 
 1. **Pi**：在 Windows/ConPTY 下默认使用硬件光标就更稳；或者用 OSC 11 查到的终端背景色来选光标的显式颜色。
 2. **主题 / Zed 内置主题**：浅色主题里 `ansi.white` 不应等于 `terminal.background`（`Ayu Light` 也有同样问题）。
+3. **Zed / OpenSSH**（可选）：Zed 在 Windows 上与 OpenSSH 的组合下无法控制终端的 PTY 实现；
+   如果将来 Zed 改为让远端 server 自己创建终端 PTY，那 `install-conpty.ps1` 那一步才真正生效。
 
 ## 一句话总结
 
